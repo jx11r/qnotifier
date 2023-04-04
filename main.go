@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"os"
 	"time"
 
 	"github.com/jx11r/qnotifier/provider/github"
@@ -23,11 +22,5 @@ func task(id string, fn func() error) {
 func main() {
 	go task("issues", github.Issues)
 	go task("releases", github.Releases)
-	go task("reddit", reddit.Posts)
-
-	fmt.Println("Press Enter to exit...")
-	if _, err := fmt.Scanln(); err != nil {
-		fmt.Println("Error reading input:", err)
-		os.Exit(1)
-	}
+	task("reddit", reddit.Posts)
 }
