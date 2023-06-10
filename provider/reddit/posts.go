@@ -25,6 +25,11 @@ func Posts() error {
 
 	data := gjson.GetBytes(raw, "data.children.0.data").String()
 	id := gjson.Get(data, "id").String()
+
+	if id == "" {
+		return nil
+	}
+
 	if ids[0] == "" {
 		ids[0] = id
 		return nil
