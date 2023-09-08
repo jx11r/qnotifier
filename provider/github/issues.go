@@ -12,7 +12,7 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-const fallback = "https://raw.githubusercontent.com/jx11r/src/!/img/github.png"
+const fallback = "https://raw.githubusercontent.com/jx11r/src/i/gh/img.png"
 
 var issue int
 

@@ -29,7 +29,10 @@ func Releases() error {
 	}
 
 	previous, _ := semver.NewVersion(release)
-	latest, _ := semver.NewVersion(current)
+	latest, err := semver.NewVersion(current)
+	if err != nil {
+		return nil
+	}
 
 	if latest.GreaterThan(previous) {
 		release = current
@@ -41,27 +44,28 @@ func Releases() error {
 }
 
 func getRelease(data string) []byte {
+	url := gjson.Get(data, "html_url").String()
+
+	imageURL, exists := getImage(url)
+	if exists {
+		if !isImage(imageURL) {
+			imageURL = fallback
+		}
+	}
+
 	payload := fmt.Sprintf(`{
 		"username": "GitHub",
 		"embeds": [{
-			"title": "%s",
-			"description": "%s",
+			"title": "New release published: %s",
 			"url": "%s",
 			"color": %d,
-			"author": {
-				"name": "%s",
-				"icon_url": "%s",
-				"url": "%s"
-			}
+			"image": {"url": "%s"}
 		}]
 	}`,
 		gjson.Get(data, "tag_name").String(),
-		gjson.Get(data, "body").String(),
-		gjson.Get(data, "html_url").String(),
-		0x202225,
-		gjson.Get(data, "author.login").String(),
-		gjson.Get(data, "author.avatar_url").String(),
-		gjson.Get(data, "author.html_url").String(),
+		url,
+		0x60c67b,
+		imageURL,
 	)
 
 	return []byte(payload)
