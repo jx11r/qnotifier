@@ -10,8 +10,7 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-var ids = make([]string, 10)
-var lastTimestamp float64
+var lastTimestamp int64
 
 func Posts() error {
 	obj := provider.Notifier{
@@ -24,16 +23,14 @@ func Posts() error {
 		return err
 	}
 
-	data := gjson.GetBytes(raw, "data.children.0.data").String()
-	id := gjson.Get(data, "id").String()
-	createdAt := gjson.Get(data, "created_utc").Num
-
-	if id == "" {
+	data := gjson.GetBytes(raw, "data.children.0.data")
+	if !data.Exists() {
 		return nil
 	}
 
-	if ids[0] == "" {
-		ids[0] = id
+	createdAt := data.Get("created_utc").Int()
+
+	if lastTimestamp == 0 {
 		lastTimestamp = createdAt
 		return nil
 	}
@@ -42,15 +39,7 @@ func Posts() error {
 		return nil
 	}
 
-	for _, v := range ids {
-		if v == id {
-			return nil
-		}
-	}
-
-	obj.Payload = getPost(data)
-	copy(ids[1:], ids[:9])
-	ids[0] = id
+	obj.Payload = getPost(data.String())
 	lastTimestamp = createdAt
 
 	return obj.Send()
