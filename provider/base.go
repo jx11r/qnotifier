@@ -10,7 +10,10 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-var Client = &http.Client{Timeout: 5 * time.Second}
+var (
+	Client        = &http.Client{Timeout: 5 * time.Second}
+	WebhookClient = &http.Client{Timeout: 10 * time.Second}
+)
 
 type Notifier struct {
 	API     string
@@ -71,7 +74,7 @@ func (n *Notifier) Send(returnID bool) (string, error) {
 
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := Client.Do(req)
+	resp, err := WebhookClient.Do(req)
 	if err != nil {
 		return "", err
 	}

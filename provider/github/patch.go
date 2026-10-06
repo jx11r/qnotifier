@@ -59,7 +59,7 @@ func patchWebhook(webhook, id string, payload []byte) error {
 
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := provider.Client.Do(req)
+	resp, err := provider.WebhookClient.Do(req)
 	if err != nil {
 		return err
 	}
