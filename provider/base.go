@@ -42,6 +42,11 @@ func (n *Notifier) Fetch(allowNotFound ...bool) ([]byte, error) {
 		}
 	}
 
+	if resp.StatusCode == http.StatusTooManyRequests {
+		reset := resp.Header.Get("X-Ratelimit-Reset")
+		return nil, fmt.Errorf("%s returned %s (retry in %ss)", n.API, resp.Status, reset)
+	}
+
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("%s returned %s", n.API, resp.Status)
 	}
