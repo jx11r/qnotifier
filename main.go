@@ -1,25 +1,41 @@
 package main
 
 import (
-	"fmt"
+	"context"
+	"log"
+	"os"
+	"os/signal"
 	"time"
 
-	"github.com/jx11r/qnotifier/provider/github"
-	"github.com/jx11r/qnotifier/provider/reddit"
+	"qnotifier/provider/github"
+	"qnotifier/provider/reddit"
 )
 
-func task(id string, fn func() error) {
-	for {
-		if err := fn(); err != nil {
-			fmt.Printf("%s: %s\n", id, err.Error())
-			time.Sleep(time.Minute)
-		}
-		time.Sleep(time.Minute)
+func tasks() {
+	if github.PendingPatches() {
+		github.ApplyPatches()
 	}
+	github.Issues()
+	github.Releases()
+	reddit.Posts()
 }
 
 func main() {
-	go task("issues", github.Issues)
-	go task("releases", github.Releases)
-	task("reddit", reddit.Posts)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+
+	ticker := time.NewTicker(1 * time.Minute)
+	defer ticker.Stop()
+
+	tasks()
+
+	for {
+		select {
+		case <-ctx.Done():
+			log.Println("shutting down...")
+			return
+		case <-ticker.C:
+			tasks()
+		}
+	}
 }

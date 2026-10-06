@@ -1,133 +1,139 @@
 package github
 
 import (
+	"encoding/json"
 	"fmt"
-	"net/http"
-	"strings"
-	"time"
+	"log"
 
-	"github.com/PuerkitoBio/goquery"
-	"github.com/jx11r/qnotifier/provider"
-	"github.com/jx11r/qnotifier/utils"
+	"qnotifier/discord"
+	"qnotifier/provider"
+
 	"github.com/tidwall/gjson"
 )
 
-const fallback = "https://raw.githubusercontent.com/jx11r/src/assets/qnotifier/not_found.png"
+var issue int64
 
-var issue int
-
-func Issues() error {
-	obj := provider.Notifier{
-		API:     "https://api.github.com/repos/qtile/qtile/issues?per_page=1",
-		Webhook: utils.Webhook["issues"],
+func Issues() {
+	notifier := provider.Notifier{
+		API:     "https://api.github.com/repos/qtile/qtile/issues",
+		Header:  header.Clone(),
+		Webhook: discord.Webhook["issues"],
 	}
 
-	data, err := obj.Fetch()
-	if err != nil {
-		return err
-	}
-
-	new := int(gjson.GetBytes(data, "0.number").Int())
 	if issue == 0 {
-		issue = new
-		return nil
+		notifier.API += "?per_page=1"
+	} else {
+		notifier.API += fmt.Sprintf("/%d", issue+1)
 	}
 
-	if new > issue {
-		issue = new
-		if gjson.GetBytes(data, "0.pull_request").Exists() {
-			obj.Webhook = utils.Webhook["pulls"]
+	data, err := notifier.Fetch(issue > 0)
+	if err != nil {
+		log.Printf("error (issues:fetch): %v", err)
+		return
+	}
+
+	if data == nil {
+		nextIssue := issue + 1
+		if isDiscussion(nextIssue) && sendDiscussion(nextIssue) {
+			issue += 1
+			return
 		}
-		obj.Payload = getIssue(string(data))
-		return obj.Send()
+		return
 	}
 
-	return nil
+	if issue == 0 {
+		res := gjson.GetBytes(data, "0.number")
+		if !res.Exists() {
+			log.Print("error (issues:fetch): issue number could not be found")
+			return
+		}
+		issue = res.Int()
+		log.Printf("issues: #%d has been saved", issue)
+		return
+	}
+
+	payload, patch := getIssuePayload(string(data))
+	if payload == nil {
+		return
+	}
+
+	if gjson.GetBytes(data, "pull_request").Exists() {
+		notifier.Webhook = discord.Webhook["pulls"]
+		if patch != nil {
+			patch.Webhook = "pulls"
+		}
+	}
+
+	notifier.Payload = payload
+	id, err := notifier.Send(true)
+	if err != nil {
+		log.Printf("error (issues:send): %v", err)
+		return
+	}
+
+	number := gjson.GetBytes(data, "number").String()
+	if patch != nil {
+		toPatch[id] = patch
+		log.Printf("issues: a patch for #%s was created (ID: %s)", number, id)
+	}
+
+	issue += 1
+	log.Printf("issues: #%s has been sent", number)
 }
 
-func getIssue(data string) []byte {
-	number := gjson.Get(data, "0.number").String()
+func getIssuePayload(data string) ([]byte, *savePatch) {
+	number := gjson.Get(data, "number").String()
 	title := "Issue opened: #" + number
 	color := 0xeb6420
-	url := gjson.Get(data, "0.html_url").String()
+	itemType := "issues"
 
-	if gjson.Get(data, "0.pull_request").Exists() {
+	if gjson.Get(data, "pull_request").Exists() {
 		title = "Pull request opened: #" + number
 		color = 0x7289da
+		itemType = "pull"
 	}
 
-	imageURL, exists := getImage(url)
-	if exists {
-		if !isImage(imageURL) {
-			imageURL = fallback
-		}
+	updatedAt := gjson.Get(data, "updated_at").Time().Unix()
+	openGraphURL := getOpenGraphURL(updatedAt, itemType, number)
+
+	imageURL := openGraphURL
+	if !isImage(openGraphURL) {
+		log.Printf("issues (#%s): image could not be loaded, using fallback", number)
+		imageURL = fallbackImage
 	}
 
-	payload := fmt.Sprintf(`{
-		"username": "GitHub",
-		"embeds": [{
-			"title": "%s",
-			"url": "%s",
-			"color": %d,
-			"image": {"url": "%s"},
-			"author": {
-				"name": "%s",
-				"icon_url": "%s",
-				"url": "%s"
-			}
-		}]
-	}`,
-		title,
-		url,
-		color,
-		imageURL,
-		gjson.Get(data, "0.user.login").String(),
-		gjson.Get(data, "0.user.avatar_url").String(),
-		gjson.Get(data, "0.user.html_url").String(),
-	)
+	payload := discord.Payload{
+		Username: "GitHub",
+		Embeds: []discord.Embed{
+			{
+				Title: title,
+				URL:   gjson.Get(data, "html_url").String(),
+				Color: color,
+				Image: &discord.EmbedImage{
+					URL: imageURL,
+				},
+				Author: &discord.EmbedAuthor{
+					Name: gjson.Get(data, "user.login").String(),
+					Icon: gjson.Get(data, "user.avatar_url").String(),
+					URL:  gjson.Get(data, "user.html_url").String(),
+				},
+			},
+		},
+	}
 
-	return []byte(payload)
-}
-
-func getImage(url string) (string, bool) {
-	resp, err := http.Get(url)
+	body, err := json.Marshal(payload)
 	if err != nil {
-		return fallback, false
-	}
-	defer resp.Body.Close()
-
-	doc, err := goquery.NewDocumentFromReader(resp.Body)
-	if err != nil {
-		return fallback, false
+		log.Printf("error (issues:json): %v", err)
+		return nil, nil
 	}
 
-	content, exists := doc.Find("meta[property='og:image']").Attr("content")
-	if !exists {
-		return fallback, false
+	if imageURL != fallbackImage {
+		return body, nil
 	}
 
-	return content, true
-}
-
-func isImage(url string) bool {
-	client := &http.Client{
-		Timeout: time.Second * 10,
+	return body, &savePatch{
+		Data:     body,
+		ImageURL: openGraphURL,
+		Webhook:  "issues",
 	}
-
-	for i := 0; i < 3; i++ {
-		resp, err := client.Get(url)
-		if err != nil {
-			continue
-		}
-		defer resp.Body.Close()
-
-		content := resp.Header.Get("Content-Type")
-		if strings.HasPrefix(content, "image/") {
-			return true
-		}
-
-		time.Sleep(time.Second * 30)
-	}
-
-	return false
 }

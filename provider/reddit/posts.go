@@ -1,97 +1,103 @@
 package reddit
 
 import (
+	"encoding/json"
+	"encoding/xml"
 	"fmt"
-	"math/rand"
+	"log"
+	"math/rand/v2"
+	"net/http"
 	"strings"
+	"time"
 
-	"github.com/jx11r/qnotifier/provider"
-	"github.com/jx11r/qnotifier/utils"
-	"github.com/tidwall/gjson"
+	"qnotifier/discord"
+	"qnotifier/provider"
 )
 
-var lastTimestamp int64
+var lastPublishedAt time.Time
 
-func Posts() error {
-	obj := provider.Notifier{
-		API:     "https://www.reddit.com/r/qtile/new.json?limit=1",
-		Webhook: utils.Webhook["reddit"],
+func Posts() {
+	notifier := provider.Notifier{
+		API:     "https://www.reddit.com/r/qtile/new.rss?limit=1",
+		Webhook: discord.Webhook["reddit"],
+		Header: http.Header{
+			"User-Agent": {"script:qnotifier:v1.0 (by /u/jx11r)"},
+		},
 	}
 
-	raw, err := obj.Fetch()
+	data, err := notifier.Fetch()
 	if err != nil {
-		return err
+		log.Printf("error (reddit:fetch): %v", err)
+		return
 	}
 
-	data := gjson.GetBytes(raw, "data.children.0.data")
-	if !data.Exists() {
-		return nil
+	var feed Feed
+	err = xml.Unmarshal(data, &feed)
+	if err != nil {
+		log.Printf("error (reddit:xml): %v", err)
+		return
 	}
 
-	createdAt := data.Get("created_utc").Int()
+	if len(feed.Entries) == 0 {
+		log.Println("reddit: no entries found in feed")
+		return
+	}
+	entry := feed.Entries[0]
 
-	if lastTimestamp == 0 {
-		lastTimestamp = createdAt
-		return nil
+	if lastPublishedAt.IsZero() {
+		lastPublishedAt, _ = time.Parse(time.RFC3339, entry.Published)
+		log.Printf("reddit: latest post has been saved (%s)", entry.Link.Href)
+		return
 	}
 
-	if createdAt <= lastTimestamp {
-		return nil
+	publishedAt, _ := time.Parse(time.RFC3339, entry.Published)
+	if !publishedAt.After(lastPublishedAt) {
+		return
 	}
 
-	obj.Payload = getPost(data.String())
-	lastTimestamp = createdAt
+	payload := getPayload(entry)
+	if payload == nil {
+		return
+	}
 
-	return obj.Send()
+	notifier.Payload = payload
+	_, err = notifier.Send(false)
+	if err != nil {
+		log.Printf("error (reddit:send): %v", err)
+		return
+	}
+
+	lastPublishedAt = publishedAt
+	log.Printf("reddit: a new post has been sent (%s)", entry.Link.Href)
 }
 
-func getPost(data string) []byte {
-	const prefix string = "https://reddit.com"
-	footer := "Flair: unspecified"
-	author := gjson.Get(data, "author").String()
-
-	flair := gjson.Get(data, "link_flair_text").String()
-	if flair != "" {
-		footer = "Flair: " + flair
-	}
-
-	thumbnail := gjson.Get(data, "thumbnail").String()
-	if !strings.Contains(thumbnail, "https") {
-		thumbnail = ""
-	}
-
-	url := gjson.Get(data, "url").String()
-	if strings.Contains(url, "i.redd.it") {
-		thumbnail = url
-	}
-
-	payload := fmt.Sprintf(`{
-		"username": "Reddit",
-		"embeds": [{
-			"title": "%s",
-			"url": "%s",
-			"color": %d,
-			"footer": {"text": "%s"},
-			"thumbnail": {"url": "%s"},
-			"author": {
-				"name": "%s",
-				"icon_url": "%s",
-				"url": "%s"
-			}
-		}]
-	}`,
-		gjson.Get(data, "title").String(),
-		prefix+gjson.Get(data, "permalink").String(),
-		0xff4400,
-		footer,
-		thumbnail,
-		author,
-		fmt.Sprintf(
-			"https://www.redditstatic.com/avatars/defaults/v2/avatar_default_%d.png",
-			rand.Intn(8),
-		),
-		prefix+"/user/"+author,
+func getPayload(entry Entry) []byte {
+	icon_url := fmt.Sprintf(
+		"https://www.redditstatic.com/avatars/defaults/v2/avatar_default_%d.png",
+		rand.IntN(8),
 	)
 
-	return []byte(payload)
+	payload := discord.Payload{
+		Username: "Reddit",
+		Embeds: []discord.Embed{
+			{
+				Title: entry.Title,
+				URL:   entry.Link.Href,
+				Color: 0xff4400,
+				Author: &discord.EmbedAuthor{
+					Name: strings.TrimPrefix(entry.Author.Name, "/u/"),
+					Icon: icon_url,
+					URL:  entry.Author.URI,
+				},
+			},
+		},
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		log.Printf("error (reddit:json): %v", err)
+		return nil
+	}
+
+	return body
 }
