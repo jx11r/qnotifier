@@ -15,14 +15,10 @@ const fallbackImage = "https://raw.githubusercontent.com/jx11r/src/assets/qnotif
 
 const userAgent = "qnotifier/1.0"
 
-var token = map[string]string{
-	"github": os.Getenv("GITHUB_TOKEN"),
-}
-
 var header = http.Header{
 	"User-Agent":           {userAgent},
 	"Accept":               {"application/vnd.github+json"},
-	"Authorization":        {"token " + token["github"]},
+	"Authorization":        {"token " + os.Getenv("GITHUB_TOKEN")},
 	"X-GitHub-Api-Version": {"2026-03-10"},
 }
 
@@ -50,6 +46,7 @@ func isImage(url string) bool {
 			_ = resp.Body.Close()
 
 			if resp.StatusCode == http.StatusOK && strings.HasPrefix(contentType, "image/") {
+				time.Sleep(3 * time.Second)
 				return true
 			}
 
