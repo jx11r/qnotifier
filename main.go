@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"qnotifier/provider/github"
-	"qnotifier/provider/reddit"
 )
 
 func tasks() {
@@ -17,7 +16,6 @@ func tasks() {
 	}
 	github.Issues()
 	github.Releases()
-	reddit.Posts()
 }
 
 func main() {
